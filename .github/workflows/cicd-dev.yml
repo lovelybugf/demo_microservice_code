@@ -8,13 +8,35 @@ jobs:
   build_push_and_update_manifests:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        service:
+          - name: frontend
+            path: ./src/frontend
+          - name: adservice
+            path: ./src/adservice
+          - name: cartservice
+            path: ./src/cartservice/src
+          - name: checkoutservice
+            path: ./src/checkoutservice
+          - name: currencyservice
+            path: ./src/currencyservice
+          - name: emailservice
+            path: ./src/emailservice
+          - name: loadgenerator
+            path: ./src/loadgenerator
+          - name: paymentservice
+            path: ./src/paymentservice
+          - name: productcatalogservice
+            path: ./src/productcatalogservice
+          - name: recommendationservice
+            path: ./src/recommendationservice
+          - name: shippingservice
+            path: ./src/shippingservice
+
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      # Image trên Docker Hub của bạn (figbugmely)
-      IMAGE_NAME: figbugmely/onlineboutique-frontend
-      IMAGE_TAG: ${{ github.sha }} # hoặc đổi sang tag khác nếu muốn
-
       MANIFESTS_REPO: lovelybugf/demo_microservice_manifest
       MANIFESTS_BRANCH: env/dev
 
@@ -28,13 +50,17 @@ jobs:
           username: ${{ env.DOCKERHUB_USER }}
           password: ${{ env.DOCKERHUB_TOKEN }}
 
-      - name: Build Docker image (frontend)
+      - name: Build Docker image ${{ matrix.service.name }}
         run: |
-          docker build -t $IMAGE_NAME:$IMAGE_TAG ./src/frontend
+          IMAGE_NAME="figbugmely/onlineboutique-${{ matrix.service.name }}"
+          IMAGE_TAG="${{ github.sha }}"
+          docker build -t "$IMAGE_NAME:$IMAGE_TAG" "${{ matrix.service.path }}"
 
-      - name: Push Docker image
+      - name: Push Docker image ${{ matrix.service.name }}
         run: |
-          docker push $IMAGE_NAME:$IMAGE_TAG
+          IMAGE_NAME="figbugmely/onlineboutique-${{ matrix.service.name }}"
+          IMAGE_TAG="${{ github.sha }}"
+          docker push "$IMAGE_NAME:$IMAGE_TAG"
 
       - name: Checkout manifests repo (env/dev)
         uses: actions/checkout@v4
@@ -44,11 +70,19 @@ jobs:
           ref: ${{ env.MANIFESTS_BRANCH }}
           path: manifests
 
-      - name: Cập nhật tag image trong manifests (ví dụ frontend)
+      - name: Cập nhật tag image trong manifests cho ${{ matrix.service.name }}
         working-directory: manifests
         run: |
-          # TODO: nếu bạn đổi tên image hoặc file, chỉnh lại lệnh này cho khớp.
-          sed -i "s|\(image: \).*onlineboutique-frontend:.*|\1$IMAGE_NAME:$IMAGE_TAG|" kustomize/base/frontend.yaml
+          IMAGE_NAME="figbugmely/onlineboutique-${{ matrix.service.name }}"
+          IMAGE_TAG="${{ github.sha }}"
+          FILE="kustomize/base/${{ matrix.service.name }}.yaml"
+
+          # Nếu file tồn tại thì mới sửa
+          if [ -f "$FILE" ]; then
+            sed -i "s|image: .*${{ matrix.service.name }}:.*|image: $IMAGE_NAME:$IMAGE_TAG|" "$FILE"
+          else
+            echo "File $FILE không tồn tại, bỏ qua."
+          fi
 
       - name: Commit và push thay đổi vào env/dev
         working-directory: manifests
@@ -61,7 +95,7 @@ jobs:
             exit 0
           fi
 
-          git add kustomize/base/frontend.yaml
-          git commit -m "ci: cap nhat image frontend len $IMAGE_TAG"
+          git add kustomize/base
+          git commit -m "ci: cap nhat images len ${{ github.sha }}"
           git push origin $MANIFESTS_BRANCH
 
