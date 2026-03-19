@@ -5,7 +5,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build_push_and_update_manifests:
+  build_images:
     runs-on: ubuntu-latest
 
     strategy:
@@ -33,62 +33,82 @@ jobs:
             path: ./src/recommendationservice
           - name: shippingservice
             path: ./src/shippingservice
-      # Tránh race condition: nhiều job matrix cùng push vào một branch `env/dev`.
-      # Chạy tuần tự để mỗi job push xong thì job tiếp theo mới bắt đầu.
-      max-parallel: 1
+      # Build có thể chạy song song, nhưng không chạm vào branch manifests.
+      max-parallel: 4
       fail-fast: false
 
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      MANIFESTS_REPO: lovelybugf/demo_microservice_manifest
-      MANIFESTS_BRANCH: env/dev
 
     steps:
       - name: Checkout code repo
         uses: actions/checkout@v4
 
-      - name: Log in to DockerHub
+      - name: Đăng nhập DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ env.DOCKERHUB_USER }}
           password: ${{ env.DOCKERHUB_TOKEN }}
 
-      - name: Build Docker image ${{ matrix.service.name }}
+      - name: Build & push image ${{ matrix.service.name }}
         run: |
           IMAGE_NAME="figbugmely/onlineboutique-${{ matrix.service.name }}"
           IMAGE_TAG="${{ github.sha }}"
           docker build -t "$IMAGE_NAME:$IMAGE_TAG" "${{ matrix.service.path }}"
-
-      - name: Push Docker image ${{ matrix.service.name }}
-        run: |
-          IMAGE_NAME="figbugmely/onlineboutique-${{ matrix.service.name }}"
-          IMAGE_TAG="${{ github.sha }}"
           docker push "$IMAGE_NAME:$IMAGE_TAG"
 
-      - name: Checkout manifests repo (env/dev)
+  update_manifests_dev:
+    runs-on: ubuntu-latest
+    needs: build_images
+
+    env:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      MANIFESTS_REPO: lovelybugf/demo_microservice_manifest
+      MANIFESTS_BRANCH: env/dev
+
+    steps:
+      - name: Checkout repo manifests (nhánh env/dev)
         uses: actions/checkout@v4
         with:
           repository: ${{ env.MANIFESTS_REPO }}
-          token: ${{ secrets.MANIFESTS_REPO_PAT }}   # PAT có quyền push
+          token: ${{ secrets.MANIFESTS_REPO_PAT }}
           ref: ${{ env.MANIFESTS_BRANCH }}
           path: manifests
 
-      - name: Cập nhật tag image trong manifests cho ${{ matrix.service.name }}
+      - name: Cập nhật tag image trong Kustomize base cho tất cả service
         working-directory: manifests
         run: |
-          IMAGE_NAME="figbugmely/onlineboutique-${{ matrix.service.name }}"
-          IMAGE_TAG="${{ github.sha }}"
-          FILE="kustomize/base/${{ matrix.service.name }}.yaml"
+          set -euo pipefail
+          TAG="${{ github.sha }}"
+          PREFIX="figbugmely/onlineboutique"
 
-          # Nếu file tồn tại thì mới sửa
-          if [ -f "$FILE" ]; then
-            sed -i "s|image: .*${{ matrix.service.name }}:.*|image: $IMAGE_NAME:$IMAGE_TAG|" "$FILE"
-          else
-            echo "File $FILE không tồn tại, bỏ qua."
-          fi
+          SERVICES=(
+            frontend
+            adservice
+            cartservice
+            checkoutservice
+            currencyservice
+            emailservice
+            loadgenerator
+            paymentservice
+            productcatalogservice
+            recommendationservice
+            shippingservice
+          )
 
-      - name: Commit và push thay đổi vào env/dev
+          for svc in "${SERVICES[@]}"; do
+            FILE="kustomize/base/${svc}.yaml"
+            if [ -f "$FILE" ]; then
+              IMAGE_NAME="${PREFIX}-${svc}"
+              # Thay toàn bộ dòng image: ... thành image mới
+              sed -i "s|image: .*${svc}:.*|image: ${IMAGE_NAME}:${TAG}|" "$FILE"
+            else
+              echo "Không thấy $FILE, bỏ qua $svc"
+            fi
+          done
+
+      - name: Commit và push thay đổi sang env/dev (tiếng Việt)
         working-directory: manifests
         run: |
           git config user.name "github-actions[bot]"
@@ -99,10 +119,9 @@ jobs:
             exit 0
           fi
 
-          # Lấy commit mới nhất trên remote trước khi push (phòng trường hợp có người/CI push song song).
           git pull --rebase origin "$MANIFESTS_BRANCH" || true
 
           git add kustomize/base
-          git commit -m "ci: cap nhat images len ${{ github.sha }}"
-          git push origin $MANIFESTS_BRANCH
+          git commit -m "CI: cập nhật image lên nhánh env/dev (${{ github.sha }})"
+          git push origin "$MANIFESTS_BRANCH"
 
