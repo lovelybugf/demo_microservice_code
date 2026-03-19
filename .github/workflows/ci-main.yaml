@@ -14,19 +14,9 @@
 
 name: "Continuous Integration - Main/Release"
 on:
-  push:
-    # run on pushes to main or release/*
-    branches:
-      - main
-      - release/*
-    paths-ignore:
-      - '**/README.md'
-      - 'devops/kustomize/**'
-      - '.github/workflows/kustomize-build-ci.yaml'
-      - 'devops/terraform/**'
-      - '.github/workflows/terraform-validate-ci.yaml'
-      - 'devops/helm-chart/**'
-      - '.github/workflows/helm-chart-ci.yaml'
+  # Disable auto-trigger so only the intended GitOps workflow runs.
+  # Run manually from GitHub UI when needed.
+  workflow_dispatch: {}
 jobs:
   code-tests:
     runs-on: [self-hosted, is-enabled]
