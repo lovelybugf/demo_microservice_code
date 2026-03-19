@@ -1,0 +1,67 @@
+name: CI/CD dev (build + push + update manifests)
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build_push_and_update_manifests:
+    runs-on: ubuntu-latest
+
+    env:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Image trên Docker Hub của bạn (figbugmely)
+      IMAGE_NAME: figbugmely/onlineboutique-frontend
+      IMAGE_TAG: ${{ github.sha }} # hoặc đổi sang tag khác nếu muốn
+
+      MANIFESTS_REPO: lovelybugf/demo_microservice_manifest
+      MANIFESTS_BRANCH: env/dev
+
+    steps:
+      - name: Checkout code repo
+        uses: actions/checkout@v4
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USER }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+      - name: Push Docker image
+        run: |
+          docker push $IMAGE_NAME:$IMAGE_TAG
+
+      - name: Checkout manifests repo (env/dev)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MANIFESTS_REPO }}
+          token: ${{ secrets.MANIFESTS_REPO_PAT }}   # PAT có quyền push
+          ref: ${{ env.MANIFESTS_BRANCH }}
+          path: manifests
+
+      - name: Cập nhật tag image trong manifests (ví dụ frontend)
+        working-directory: manifests
+        run: |
+          # TODO: nếu bạn đổi tên image hoặc file, chỉnh lại lệnh này cho khớp.
+          sed -i "s|\(image: \).*onlineboutique-frontend:.*|\1$IMAGE_NAME:$IMAGE_TAG|" kustomize/base/frontend.yaml
+
+      - name: Commit và push thay đổi vào env/dev
+        working-directory: manifests
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "Không có thay đổi manifests để commit."
+            exit 0
+          fi
+
+          git add kustomize/base/frontend.yaml
+          git commit -m "ci: cap nhat image frontend len $IMAGE_TAG"
+          git push origin $MANIFESTS_BRANCH
+
