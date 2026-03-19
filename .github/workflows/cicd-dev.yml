@@ -33,6 +33,10 @@ jobs:
             path: ./src/recommendationservice
           - name: shippingservice
             path: ./src/shippingservice
+      # Tránh race condition: nhiều job matrix cùng push vào một branch `env/dev`.
+      # Chạy tuần tự để mỗi job push xong thì job tiếp theo mới bắt đầu.
+      max-parallel: 1
+      fail-fast: false
 
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -94,6 +98,9 @@ jobs:
             echo "Không có thay đổi manifests để commit."
             exit 0
           fi
+
+          # Lấy commit mới nhất trên remote trước khi push (phòng trường hợp có người/CI push song song).
+          git pull --rebase origin "$MANIFESTS_BRANCH" || true
 
           git add kustomize/base
           git commit -m "ci: cap nhat images len ${{ github.sha }}"
